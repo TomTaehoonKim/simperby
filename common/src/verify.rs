@@ -125,7 +125,7 @@ pub struct CommitSequenceVerifier {
     header: BlockHeader,
     phase: Phase,
     reserved_state: ReservedState,
-    commit_hash: Hash256,
+    commits: Vec<Commit>,
 }
 
 impl CommitSequenceVerifier {
@@ -135,7 +135,7 @@ impl CommitSequenceVerifier {
             header: start_header.clone(),
             phase: Phase::Block,
             reserved_state,
-            commit_hash: Hash256::hash(format!("{}", start_header.height + 1)),
+            commits: vec![],
         })
     }
     /// Verifies the given commit and updates the internal reserved_state of CommitSequenceVerifier.
@@ -149,23 +149,17 @@ impl CommitSequenceVerifier {
                 },
             ) => {
                 verify_header_to_header(&self.header, block_header)?;
-                // Verify block body
-                if *transaction_merkle_root != block_header.tx_merkle_root {
+                // Verify commit merkle root
+                let commit_merkle_root = BlockHeader::calculate_commit_merkle_root(&self.commits);
+                if commit_merkle_root != block_header.commit_merkle_root {
                     return Err(Error::InvalidArgument(format!(
-                        "invalid transaction merkle root hash: expected {}, got {}",
-                        transaction_merkle_root, block_header.tx_merkle_root
+                        "invalid commit merkle root: expected {}, got {}",
+                        commit_merkle_root, block_header.commit_merkle_root
                     )));
-                }
-                // Verify commit hash
-                if self.commit_hash != block_header.commit_hash {
-                    return Err(Error::InvalidArgument(format!(
-                        "invalid block commit hash: expected {}, got {}",
-                        self.commit_hash, block_header.commit_hash
-                    )));
-                }
+                };
                 self.header = block_header.clone();
                 self.phase = Phase::Block;
-                self.commit_hash = Hash256::hash(format!("{}", block_header.height + 1));
+                self.commits = vec![];
             }
             (
                 Commit::Block(block_header),
