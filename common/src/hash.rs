@@ -92,7 +92,7 @@ impl Agenda {
 
 impl BlockHeader {
     /// Calculates `commit_merkle_root`. Note that it doesn't verify the commits.
-    pub fn calculate_commit_merkle_root(&self, commits: &[Commit]) -> Hash256 {
+    pub fn calculate_commit_merkle_root(commits: &[Commit]) -> Hash256 {
         let merkle_tree = crate::merkle_tree::OneshotMerkleTree::create(
             commits.iter().map(|x| x.to_hash256()).collect(),
         );
