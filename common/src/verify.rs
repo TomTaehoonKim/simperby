@@ -99,18 +99,15 @@ enum Phase {
     // The agenda phase.
     Agenda {
         agenda: Agenda,
-        transaction_merkle_root: Hash256,
     },
     // The agenda proof phase.
     AgendaProof {
         agenda_proof: AgendaProof,
-        transaction_merkle_root: Hash256,
     },
     // The extra phase.
     // Extra phase consists of `ExtraAgendaTransaction`s and `ChatLog`s.
     ExtraAgendaTransaction {
         last_extra_agenda_timestamp: Timestamp,
-        transaction_merkle_root: Hash256,
         // TODO: add `ChatLog` here.
     },
     // The block phase.
@@ -141,13 +138,7 @@ impl CommitSequenceVerifier {
     /// Verifies the given commit and updates the internal reserved_state of CommitSequenceVerifier.
     pub fn apply_commit(&mut self, commit: &Commit) -> Result<(), Error> {
         match (commit, &mut self.phase) {
-            (
-                Commit::Block(block_header),
-                Phase::AgendaProof {
-                    agenda_proof: _,
-                    transaction_merkle_root,
-                },
-            ) => {
+            (Commit::Block(block_header), Phase::AgendaProof { agenda_proof: _ }) => {
                 verify_header_to_header(&self.header, block_header)?;
                 // Verify commit merkle root
                 let commit_merkle_root = BlockHeader::calculate_commit_merkle_root(&self.commits);
@@ -165,7 +156,6 @@ impl CommitSequenceVerifier {
                 Commit::Block(block_header),
                 Phase::ExtraAgendaTransaction {
                     last_extra_agenda_timestamp,
-                    transaction_merkle_root,
                 },
             ) => {
                 verify_header_to_header(&self.header, block_header)?;
@@ -176,23 +166,17 @@ impl CommitSequenceVerifier {
                         last_extra_agenda_timestamp, block_header.timestamp
                     )));
                 }
-                // Verify block body
-                if *transaction_merkle_root != block_header.tx_merkle_root {
-                    return Err(Error::InvalidArgument(format!(
-                        "invalid transaction merkle root hash: expected {}, got {}",
-                        transaction_merkle_root, block_header.tx_merkle_root
-                    )));
-                }
                 // Verify commit hash
-                if self.commit_hash != block_header.commit_hash {
+                let commit_merkle_root = BlockHeader::calculate_commit_merkle_root(&self.commits);
+                if commit_merkle_root != block_header.commit_merkle_root {
                     return Err(Error::InvalidArgument(format!(
-                        "invalid block commit hash: expected {}, got {}",
-                        self.commit_hash, block_header.commit_hash
+                        "invalid commit merkle root: expected {}, got {}",
+                        commit_merkle_root, block_header.commit_merkle_root
                     )));
-                }
+                };
                 self.header = block_header.clone();
                 self.phase = Phase::Block;
-                self.commit_hash = Hash256::hash(format!("{}", block_header.height + 1));
+                self.commits = vec![];
             }
             (Commit::Transaction(tx), Phase::Block) => {
                 // Update reserved_state for reserved-diff transactions.
@@ -236,7 +220,6 @@ impl CommitSequenceVerifier {
                 }
                 self.phase = Phase::Agenda {
                     agenda: agenda.clone(),
-                    transaction_merkle_root: BlockHeader::calculate_tx_merkle_root(&[]),
                 };
             }
             (
@@ -267,16 +250,9 @@ impl CommitSequenceVerifier {
                 }
                 self.phase = Phase::Agenda {
                     agenda: agenda.clone(),
-                    transaction_merkle_root: BlockHeader::calculate_tx_merkle_root(&transactions),
                 };
             }
-            (
-                Commit::AgendaProof(agenda_proof),
-                Phase::Agenda {
-                    agenda,
-                    transaction_merkle_root,
-                },
-            ) => {
+            (Commit::AgendaProof(agenda_proof), Phase::Agenda { agenda }) => {
                 // Check if agenda hash matches
                 if agenda_proof.agenda_hash != agenda.hash {
                     return Err(Error::InvalidArgument(format!(
@@ -292,16 +268,9 @@ impl CommitSequenceVerifier {
                 }
                 self.phase = Phase::AgendaProof {
                     agenda_proof: agenda_proof.clone(),
-                    transaction_merkle_root: *transaction_merkle_root,
                 };
             }
-            (
-                Commit::ExtraAgendaTransaction(tx),
-                Phase::AgendaProof {
-                    agenda_proof: _,
-                    transaction_merkle_root,
-                },
-            ) => {
+            (Commit::ExtraAgendaTransaction(tx), Phase::AgendaProof { agenda_proof: _ }) => {
                 match tx {
                     ExtraAgendaTransaction::Delegate(tx) => {
                         // Update reserved reserved_state by applying delegation
@@ -310,7 +279,6 @@ impl CommitSequenceVerifier {
                         })?;
                         self.phase = Phase::ExtraAgendaTransaction {
                             last_extra_agenda_timestamp: tx.timestamp,
-                            transaction_merkle_root: *transaction_merkle_root,
                         };
                     }
                     ExtraAgendaTransaction::Undelegate(tx) => {
@@ -320,7 +288,6 @@ impl CommitSequenceVerifier {
                         })?;
                         self.phase = Phase::ExtraAgendaTransaction {
                             last_extra_agenda_timestamp: tx.timestamp,
-                            transaction_merkle_root: *transaction_merkle_root,
                         };
                     }
                     ExtraAgendaTransaction::Report(_tx) => todo!(),
@@ -330,7 +297,6 @@ impl CommitSequenceVerifier {
                 Commit::ExtraAgendaTransaction(tx),
                 Phase::ExtraAgendaTransaction {
                     last_extra_agenda_timestamp,
-                    transaction_merkle_root: _,
                 },
             ) => {
                 match tx {
@@ -371,7 +337,7 @@ impl CommitSequenceVerifier {
                 ));
             }
         }
-        self.commit_hash = self.commit_hash.aggregate(&commit.to_hash256());
+        self.commits.push(commit.clone());
         Ok(())
     }
 }
